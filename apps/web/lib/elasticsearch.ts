@@ -2,6 +2,13 @@ import { Client } from "@elastic/elasticsearch";
 
 let client: Client | null = null;
 
+// Self-hosted without Elasticsearch: when ELASTICSEARCH_URL is unset, the
+// sync-log helpers below no-op instead of constructing a client against an
+// undefined URL (which threw on url.startsWith and spammed the logs).
+function esEnabled(): boolean {
+  return !!process.env.ELASTICSEARCH_URL;
+}
+
 function getClient(): Client {
   if (!client) {
     const url = process.env.ELASTICSEARCH_URL!;
@@ -38,6 +45,7 @@ export interface SyncLogEntry {
 }
 
 export async function writeSyncLog(entry: SyncLogEntry): Promise<void> {
+  if (!esEnabled()) return;
   try {
     const es = getClient();
     const index = getIndexName(REPO_SYNC_INDEX);
@@ -59,6 +67,7 @@ export async function getSyncLogs(
   repoId: string,
   limit = 500,
 ): Promise<SyncLogEntry[]> {
+  if (!esEnabled()) return [];
   try {
     const es = getClient();
     const index = getIndexName(REPO_SYNC_INDEX);
@@ -91,6 +100,7 @@ export async function deleteSyncLogs(
   orgId: string,
   repoId: string,
 ): Promise<void> {
+  if (!esEnabled()) return;
   try {
     const es = getClient();
     const index = getIndexName(REPO_SYNC_INDEX);
