@@ -285,7 +285,7 @@ export async function createPullRequestReview(
 }
 
 // Thrown when a PR's diff is too large for the standard reviewer path
-// (>300 files for the .diff endpoint, or >30k chars from /files reconstruction).
+// (>300 files for the .diff endpoint, or >300k chars from /files reconstruction).
 // Caller should hand the PR off to the internal-cli worker which clones the
 // repo and computes the diff via `git diff base..head`.
 export class LargePrError extends Error {
@@ -364,8 +364,8 @@ function isInternalCliEnabled(): boolean {
   return process.env.ENABLE_INTERNAL_CLI === "true";
 }
 
-const MAX_DIFF_CHARS = 30_000;
-const TRUNCATION_MARKER = "\n\n[... diff truncated at 30,000 chars]";
+const MAX_DIFF_CHARS = 300_000;
+const TRUNCATION_MARKER = `\n\n[... diff truncated at ${MAX_DIFF_CHARS.toLocaleString("en-US")} chars]`;
 
 function truncateDiff(diff: string): string {
   return diff.length > MAX_DIFF_CHARS
