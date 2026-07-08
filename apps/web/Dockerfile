@@ -51,9 +51,18 @@ ENV NODE_OPTIONS="--max-old-space-size=4096"
 # SENTRY_AUTH_TOKEN is mounted as a build secret (never baked into image layers)
 # so withSentryConfig can upload source maps. Absent/empty → upload is skipped
 # (self-host builds and any build before the CI secret is set).
+#
+# NEXT_PUBLIC_* values are inlined by `next build`, so the version must be in
+# the environment HERE, not at container runtime. When no explicit build arg is
+# passed (building from source via docker-compose.yml), fall back to the
+# workspace version in apps/web/package.json so the self-hosted Updates page
+# (/settings/updates) can report a version instead of "unknown". An explicit
+# NEXT_PUBLIC_APP_VERSION (the release workflow passes the git tag) still wins.
 RUN --mount=type=secret,id=sentry_auth_token \
     export SENTRY_AUTH_TOKEN="$(cat /run/secrets/sentry_auth_token 2>/dev/null || true)" && \
-    cd apps/web && bun run build
+    cd apps/web && \
+    NEXT_PUBLIC_APP_VERSION="${NEXT_PUBLIC_APP_VERSION:-$(bun -e 'console.log(require("./package.json").version)')}" \
+    bun run build
 
 # --- runner ---
 FROM node:22-alpine AS runner
