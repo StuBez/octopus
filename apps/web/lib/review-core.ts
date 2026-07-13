@@ -378,7 +378,10 @@ export async function generateLocalReview(params: LocalReviewParams): Promise<Lo
     response = await createAiMessage(
       {
         model: reviewModel,
-        maxTokens: 8192,
+        // Match the server review budget (see reviewer.ts): the old 8k output
+        // cap truncated large-diff reviews mid-body. Output here is parsed and
+        // returned to the CLI caller, not posted to a size-limited comment API.
+        maxTokens: 64000,
         system: systemPrompt,
         cacheSystem: true,
         messages: [
@@ -794,7 +797,10 @@ export async function generateBareLocalReview(
     response = await createAiMessage(
       {
         model: reviewModel,
-        maxTokens: 8192,
+        // Match the server review budget (see reviewer.ts): the old 8k output
+        // cap truncated large-diff reviews mid-body. Output here is parsed and
+        // returned to the CLI caller, not posted to a size-limited comment API.
+        maxTokens: 64000,
         system: systemPrompt,
         cacheSystem: true,
         messages: [
