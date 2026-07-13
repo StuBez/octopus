@@ -1843,7 +1843,14 @@ export async function processReview(pullRequestId: string): Promise<void> {
     const response = await createAiMessage(
       {
         model: reviewModel,
-        maxTokens: 8192,
+        // Large diffs (up to the 300k-char cap) can produce many findings; the
+        // old 8k output cap truncated the review mid-body and left it
+        // incomplete. Downstream is size-safe: posted comment bodies are
+        // clamped by truncateForGithubComment / built as finding-count-bound
+        // provider summaries, and the full body is stored in a Postgres text
+        // column. NB: this is the API output *ceiling* — a review model whose
+        // provider caps output below 64k (e.g. Claude 3 Opus 4096) will 400.
+        maxTokens: 64000,
         system: systemPrompt,
         cacheSystem: true,
         messages: [
