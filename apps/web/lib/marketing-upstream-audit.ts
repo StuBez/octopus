@@ -198,8 +198,8 @@ export async function auditUpstreamCash(input: AuditInput, send: AuditTransport,
         for (const s of cs) check(s.payment_intent === paymentId && s.customer === owner.customerId && s.mode === "payment", "checkout_ownership_conflict");
         const charge = candidate.kind === "charge" ? v : await retrieve("charge", id(v.charge));
         check(charge.customer === owner.customerId, "charge_customer_conflict");
-        check(payment.latest_charge === charge.id, "unsupported_multiple_capture");
         if (["failed", "canceled"].includes(String(v.status))) { dispositions.push({ subject: opaque(candidate.id), status: String(v.status) }); continue; }
+        check(payment.latest_charge === charge.id, "unsupported_multiple_capture");
         const result = await resolveStripeConversion(reader, candidate.kind === "charge" ? "purchase" : "refund", candidate.kind === "charge" ? paymentId : candidate.id, owner.orgId, p.environment);
         const original = result.originalPurchase?.event ?? result.event;
         for (const session of cs) {

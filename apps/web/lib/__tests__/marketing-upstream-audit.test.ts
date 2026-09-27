@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { auditUpstreamCash } from "../marketing-upstream-audit";
+import { conversionId } from "../marketing-conversions";
 import { upstreamFixture } from "./fixtures/marketing-upstream";
 import { runTranscript } from "../../scripts/marketing-upstream-audit";
 
@@ -19,6 +20,37 @@ describe("upstream cash audit (synthetic only)", () => {
       expect([...r.headers.keys()].sort()).toEqual(["accept", "stripe-version"]);
     }
     for (const secret of ["cus_fixture", "org_fixture", "pi_fixture", "acct_fixture"]) expect(result.body).not.toContain(secret);
+  });
+
+  it("accounts for a failed charge followed by a successful charge on the same payment", async () => {
+    const f = await upstreamFixture();
+    const failed = { ...f.charge, id: "ch_failed", created: f.charge.created - 1, status: "failed", paid: false, captured: false, amount_captured: 0 };
+    f.responses["/v1/charges"] = { object: "list", data: [failed, f.charge], has_more: false };
+    const p = JSON.parse((await auditUpstreamCash(f.input, f.send, { now: () => f.now })).body);
+    expect(p.captureAgreement).toBe("matched_for_observed_scope");
+    expect(p.processorEnumeration).toBe("enumeration_complete_for_declared_scope");
+    expect(p.gaps).toEqual([]);
+    expect(p.dispositions).toEqual([{ subject: conversionId("audit", failed.id), status: "failed" }]);
+    expect(p.members.map((m: { semanticDigest: string }) => m.semanticDigest).sort()).toEqual(f.retained.members.map(m => m.semanticDigest).sort());
+    expect(p.C).toBe("unknown");
+  });
+
+  it("preserves identity, ownership, customer, mode and successful-capture checks across attempts", async () => {
+    for (const code of ["identity_mismatch", "ownership_unresolved", "charge_customer_conflict", "mode_mismatch", "unsupported_multiple_capture"] as const) {
+      const f = await upstreamFixture();
+      const earlier = { ...f.charge, id: "ch_earlier", created: f.charge.created - 1, status: "failed", paid: false, captured: false, amount_captured: 0 };
+      if (code === "identity_mismatch") f.payment.id = "pi_wrong";
+      if (code === "ownership_unresolved") f.payment.customer = "cus_wrong";
+      if (code === "charge_customer_conflict") earlier.customer = "cus_wrong";
+      if (code === "mode_mismatch") earlier.livemode = true;
+      if (code === "unsupported_multiple_capture") Object.assign(earlier, { status: "succeeded", paid: true, captured: true, amount_captured: f.charge.amount_captured });
+      f.responses["/v1/charges"] = { object: "list", data: [earlier, f.charge], has_more: false };
+      const p = JSON.parse((await auditUpstreamCash(f.input, f.send, { now: () => f.now })).body);
+      expect(p.captureAgreement).toBe("incomplete");
+      expect(p.gaps.some((g: { code: string }) => g.code === code)).toBe(true);
+      expect(p.dispositions).toEqual([]);
+      expect(p.C).toBe("unknown");
+    }
   });
 
   it("rejects authority/digest pins before any read", async () => {
