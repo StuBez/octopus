@@ -145,11 +145,12 @@ async function processSuccessfulRefund(refundId: string, chargeId: string | null
   const environment = livemode ? "live" : "test";
   const cachedReader = { ...reader, charge: async (id: string) => id === chargeId ? charge : reader.charge(id), payment: async (id: string) => id === paymentId ? payment : reader.payment(id), refund: async (id: string) => id === refundId ? refund : reader.refund(id) };
   const resolved = await resolveStripeConversion(cachedReader, "refund", refundId, orgId, environment);
+  if (resolved.event.eventType !== "refund" || !resolved.originalPurchase) throw new Error("Refund resolution mismatch");
   // Credits are USD-denominated. Never debit GBP or another currency as dollars.
   if (resolved.event.currency !== "USD") throw new Error("Refund credit currency mismatch");
   for (const session of sessions) {
     const alias = await resolveStripeConversion({ ...cachedReader, checkout: async () => session }, "purchase", session.id, orgId, environment);
-    if (serializeConversion(alias.event) !== serializeConversion(resolved.originalPurchase!.event)) throw new Error("Refund original alias mismatch");
+    if (serializeConversion(alias.event) !== serializeConversion(resolved.originalPurchase.event)) throw new Error("Refund original alias mismatch");
   }
   const amount = Number(resolved.event.amountMinor) / 100;
   try {

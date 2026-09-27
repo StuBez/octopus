@@ -2028,6 +2028,17 @@ describe("Stripe webhook route", () => {
     }
   });
 
+  it("rejects a consistent GBP refund without changing the USD ledger or balances", async () => {
+    const f = installRefundFixture("ch_gbp", "pi_gbp", [{ id: "re_gbp", amount: 100, status: "succeeded" }]);
+    f.payment.currency = f.charge.currency = "gbp";
+    mockRefundsRetrieve = mock(() => Promise.resolve({ ...f.refunds[0], charge: f.charge.id, payment_intent: f.payment.id, currency: "gbp", created: f.charge.created + 60 } as never));
+    currentEvent = { type: "refund.updated", livemode: false, data: { object: { id: "re_gbp", charge: f.charge.id, payment_intent: f.payment.id } } };
+
+    expect((await POST(stripeRequest() as never)).status).toBe(500);
+    expect(createdTransactions).toEqual([]);
+    expect(orgState).toEqual({ creditBalance: 20, freeCreditBalance: 8 });
+  });
+
   it("verifies Checkout ownership when the original intent has no ownership metadata", async () => {
     const f = installRefundFixture("ch_checkout_refund", "pi_checkout_refund", [{ id: "re_checkout_refund", amount: 100, status: "succeeded" }]);
     f.payment.metadata = { orgId: "", type: "" };
