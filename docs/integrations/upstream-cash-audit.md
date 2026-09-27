@@ -2,7 +2,8 @@
 
 This explicitly invoked audit is separate from capture and dispatch. It has no
 default transport, credentials, database client, receiver client or scheduler.
-The supplied command reads a synthetic transcript only. It cannot contact Stripe.
+The transcript command below reads synthetic input only and cannot contact Stripe.
+For the separately invoked operator, see [real transport](#explicit-real-transport-candidate-execution-and-release-held).
 No production use or upstream completeness acceptance is implied by this candidate.
 
 ```sh
@@ -129,6 +130,15 @@ must validate before any network access. Missing or ambiguous ownership remains
 a gap even when both lists exhaust. Unsupported delayed capture, late transitions
 and broader processor/settlement completeness remain unknown.
 
+Planning and execution reject ambiguous retained inventory before provider IO:
+duplicate canonical members, ledger/outbox identities or aliases, conflicting
+payloads, receipts, origins or scope, and malformed or unrecognized gaps. Consistent
+aliases and exact older refund-original dependencies remain valid. An incomplete
+B alone does not reject the inventory: missing capture, unresolved payload or
+original, incomplete delivery, truncation and unaccounted retained origins remain
+gaps. The regression cases live in
+`apps/web/lib/__tests__/marketing-upstream-transport.test.ts`.
+
 Offline planning requires no credentials and makes no requests:
 
 ```sh
@@ -146,7 +156,7 @@ bun apps/web/scripts/marketing-upstream-transport.ts execute input.json authorit
 ```
 
 Execution reserves a new 0700 directory and exclusively writes/fsyncs a 0600
-`intent.json` before its first GET. An existing directory rejects before any read;
+`intent.json` before its first GET. An existing directory rejects before any provider read;
 do not delete/reuse it after an ambiguous interruption. `result.json` contains
 only the audit's sanitized projections, canonical identities, gaps and separate
 observations. `receipt.json` pins its digest. Incomplete intent/result/receipt

@@ -177,7 +177,7 @@ its billing ledger remains unobserved by capture until normal billing reconcilia
 records it. The outbox is not a complete independent Stripe accounting ledger or
 a producer completeness checkpoint. For bounded operator inspection and receiver
 comparison, see [retained cash observations](integrations/retained-cash-observations.md).
-For the separate synthetic-only candidate, see the
+For the separate audit and explicitly invoked transport candidate, see the
 [isolated upstream cash audit](integrations/upstream-cash-audit.md).
 Periodic reconciliation and alerts remain follow-ups.
 
