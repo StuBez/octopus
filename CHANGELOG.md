@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.8] - 2026-09-27
+
+### Fixed
+- Refunds that finish after a pending state can now update the credit balance through the individual refund completion webhook, with duplicate and ownership checks preserved.
+
+### Added
+- A bounded operator cash-audit tool compares supplied processor observations with retained ledger evidence and reports coverage gaps separately from receipt agreement. Supplied observations do not establish upstream completeness, which remains unknown even when receipts agree.
+
+### Upgrade notes
+- No database migration is required. Completion delivery requires the existing Stripe webhook destination to subscribe to `refund.updated`. That hosted subscription is currently absent and separately held; activating it is outside this application release's authorization. Application deployment does not change that subscription. This release does not replay historical events or run cash audits automatically.
+
 ## [1.2.7] - 2026-09-26
 
 ### Improved
