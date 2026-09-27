@@ -34,8 +34,11 @@ are independent of retained ledger membership. Original-payment dependencies may
 precede activation; they retain their actual timestamps and do not trigger capture.
 
 The core enforces 100 objects/page, 10 pages/list endpoint, 500 total reads,
-10 seconds/read and five minutes overall with zero retries. Page, read, deadline,
-identity or HTTP failures produce partial evidence. Each read has its own times;
+10 seconds/read and five minutes overall with zero retries. Invalid input or
+authority pins reject before any read. Page, read, deadline, identity or HTTP
+failures during observation produce partial evidence; an oversized final packet
+is rejected. Transcript mismatches or unused responses also reject without writing
+a result. Each read has its own times;
 list exhaustion is not an atomic processor snapshot. The fixture clock does not
 turn local tests into real provider or temporal acceptance.
 
@@ -54,6 +57,11 @@ exact occurrence, dependency flag, retained receipt and ledger aliases.
 - C stays `unknown` in every result.
 - `processorEnumeration` describes only exhaustion of declared account/time lists.
 - `captureAgreement` can match only the observed supported scope without gaps.
+
+Failed or canceled candidates retain a terminal disposition after identity,
+ownership, customer and mode checks, before the latest-charge capture check.
+An earlier failed attempt therefore does not make a later successful charge a
+multiple-capture gap. Successful candidates still require the capture checks.
 
 A successful processor fact missing ledger remains
 `missing_ledger_activation_unresolved`. Unknown ownership, manual/multiple capture,

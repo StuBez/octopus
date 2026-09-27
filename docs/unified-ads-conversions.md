@@ -170,10 +170,12 @@ is not delivery acceptance; synthetic tests do not establish LIVE acceptance.
 
 Capture depends on retained users and the billing ledger. Deletion before the
 next capture can remove a source fact; a successful processor payment missing
-its billing ledger remains unobserved until normal billing reconciliation
+its billing ledger remains unobserved by capture until normal billing reconciliation
 records it. The outbox is not a complete independent Stripe accounting ledger or
 a producer completeness checkpoint. For bounded operator inspection and receiver
 comparison, see [retained cash observations](integrations/retained-cash-observations.md).
+For the separate synthetic-only candidate, see the
+[isolated upstream cash audit](integrations/upstream-cash-audit.md).
 Periodic reconciliation and alerts remain follow-ups.
 
 Business events report observed registrations, gross payments and individual
