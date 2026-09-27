@@ -1,4 +1,4 @@
-import { cashDigest, cashTime, type CashBinding } from "./marketing-cash-compare";
+import { cashDigest, cashObject, cashTime, type CashBinding } from "./marketing-cash-compare";
 import { normalizeMarketingCash } from "./marketing-cash-contract";
 import { conversionId, readMarketingJson, serializeConversion, type ConversionEvent } from "./marketing-conversions";
 import { MarketingSourceError, resolveStripeConversion, type MarketingStripeReader } from "./marketing-stripe";
@@ -42,7 +42,14 @@ function project(kind: "payment" | "checkout" | "charge" | "refund", value: unkn
     else if (["livemode", "paid", "captured"].includes(f)) { check(typeof x === "boolean", "invalid_field"); result[f] = x; }
     else if (["amount_received", "amount_captured", "amount"].includes(f)) { check(Number.isSafeInteger(x) && Number(x) >= 0, "invalid_amount"); result[f] = x; }
     else if (f === "created") result[f] = time(x);
-    else result[f] = text(x);
+    else {
+      result[f] = text(x);
+      if (f === "currency") check(/^[a-z]{3}$/.test(String(x)), "invalid_currency");
+      if (f === "status") check((kind === "payment" ? ["requires_payment_method", "requires_confirmation", "requires_action", "processing", "requires_capture", "canceled", "succeeded"] : kind === "checkout" ? ["open", "complete", "expired"] : kind === "charge" ? ["succeeded", "pending", "failed"] : ["pending", "requires_action", "succeeded", "failed", "canceled"]).includes(String(x)), "invalid_status");
+      if (f === "mode") check(["payment", "setup", "subscription"].includes(String(x)), "invalid_mode");
+      if (f === "payment_status") check(["paid", "unpaid", "no_payment_required"].includes(String(x)), "invalid_status");
+      if (f === "capture_method") check(["automatic", "automatic_async", "manual"].includes(String(x)), "invalid_capture_method");
+    }
   }
   if (kind === "payment" || kind === "checkout") result.metadata = metadata(v.metadata);
   return result;
@@ -50,12 +57,17 @@ function project(kind: "payment" | "checkout" | "charge" | "refund", value: unkn
 function sanitized(v: Json): Json {
   return Object.fromEntries(Object.entries(v).map(([k, x]) => [k,
     ["id", "customer", "latest_charge", "payment_intent", "charge"].includes(k) && typeof x === "string" ? opaque(x)
-      : k === "metadata" ? { owner: obj(x).orgId ? opaque(String(obj(x).orgId)) : null, type: obj(x).type ?? null } : x]));
+      : k === "metadata" ? { owner: obj(x).orgId ? opaque(String(obj(x).orgId)) : null, type: ["credit_purchase", "auto_reload", "subscription_start", "subscription"].includes(String(obj(x).type)) ? obj(x).type : null } : x]));
 }
 
 /** Explicit, injected GET-only audit. No ambient fetch, credentials, DB, capture or receiver client. */
 export async function auditUpstreamCash(input: AuditInput, send: AuditTransport, clock = { now: () => Date.now() }) {
+  cashObject(input, ["pins", "transportBinding", "ownership", "retainedBody"]);
   const { pins: p } = input;
+  cashObject(p, ["accountId", "environment", "apiVersion", "activationFrom", "from", "to", "binding", "ownershipDigest", "retainedDigest", "predecessorDigest"]);
+  cashObject(p.binding, ["sourceId", "environment", "keyId", "capabilities", "project"]);
+  cashObject(p.binding.project, ["projectId", "version"]);
+  cashObject(input.transportBinding, ["accountId", "environment", "apiVersion"]);
   const start = clock.now();
   check(p.apiVersion === UPSTREAM_API_VERSION && /^acct_[A-Za-z0-9]+$/.test(p.accountId));
   check(["test", "live"].includes(p.environment) && p.binding.environment === p.environment);
@@ -65,11 +77,13 @@ export async function auditUpstreamCash(input: AuditInput, send: AuditTransport,
   check(uuid.test(p.binding.sourceId) && uuid.test(p.binding.keyId) && uuid.test(p.binding.project.projectId) && Number.isSafeInteger(p.binding.project.version) && p.binding.project.version > 0);
   check(Array.isArray(p.binding.capabilities) && p.binding.capabilities.every(c => ["purchases", "refunds", "registrations", "trials", "credit_balance"].includes(c)) && new Set(p.binding.capabilities).size === p.binding.capabilities.length && ["purchases", "refunds"].every(c => p.binding.capabilities.includes(c)));
   check(p.predecessorDigest === null || /^[0-9a-f]{64}$/.test(p.predecessorDigest));
-  check(input.ownership.length <= 1000 && input.ownership.every(o => id(o.orgId) && id(o.customerId)));
+  check(input.ownership.length <= 1000 && input.ownership.every(o => cashObject(o, ["orgId", "customerId"]) && id(o.orgId) && id(o.customerId)));
   check(new Set(input.ownership.map(o => o.orgId)).size === input.ownership.length && new Set(input.ownership.map(o => o.customerId)).size === input.ownership.length);
   check(digest(input.ownership) === p.ownershipDigest && Buffer.byteLength(input.retainedBody) <= 4 * 1024 * 1024 && cashDigest(input.retainedBody) === p.retainedDigest);
   const retained = obj(JSON.parse(input.retainedBody));
-  check(retained.schemaVersion === 1 && retained.captureContract === "retained-cash/v1" && retained.C === "unknown");
+  check(retained.schemaVersion === 1 && retained.captureContract === "retained-cash/v1" && retained.C === "unknown" && retained.normalizationContract === "unified-ads/conversion-event-semantic/v1");
+  const retainedObservation = cashObject(retained.producerObservation, ["startedAt", "completedAt"]);
+  check(cashTime(retainedObservation.startedAt) <= cashTime(retainedObservation.completedAt) && cashTime(retainedObservation.completedAt) >= p.to && Date.parse(String(retainedObservation.completedAt)) <= start, "retained_time_mismatch");
   check(digest(retained.binding) === digest(p.binding) && retained.activationFrom === p.activationFrom && digest(retained.scope) === digest({ from: p.from, to: p.to }), "retained_binding_mismatch");
   check(["complete_retained_scope", "incomplete"].includes(String(retained.B)) && Array.isArray(retained.gaps) && Array.isArray(retained.ledger) && Array.isArray(retained.members) && Array.isArray(retained.outbox));
   const ledger = retained.ledger.map(obj), stored = retained.members.map(obj), outbox = retained.outbox.map(obj);
@@ -80,6 +94,7 @@ export async function auditUpstreamCash(input: AuditInput, send: AuditTransport,
   const pages: { endpoint: string; page: number; cursor: string | null; count: number; hasMore: boolean; projectionDigest: string }[] = [];
   const objects = new Map<string, Json>();
   const sessions = new Map<string, Json[]>();
+  let checkoutPages = 0;
   const dispositions: { subject: string; status: string }[] = [];
   let lastClock = start;
   const now = () => { const n = clock.now(); check(n >= lastClock, "clock_regressed"); lastClock = n; return n; };
@@ -125,10 +140,14 @@ export async function auditUpstreamCash(input: AuditInput, send: AuditTransport,
   }
   async function checkouts(payment: string) {
     if (sessions.has(payment)) return sessions.get(payment)!;
+    check(checkoutPages < UPSTREAM_LIMITS.pagesPerEndpoint, "page_limit");
+    checkoutPages++;
     const page = obj(await get("/v1/checkout/sessions", { payment_intent: id(payment), limit: "2" }));
     check(page.object === "list" && Array.isArray(page.data) && typeof page.has_more === "boolean", "invalid_page");
     check(!page.has_more && page.data.length <= 1, "ambiguous_checkout");
-    const result = page.data.map(v => remember("checkout", v)); sessions.set(payment, result); return result;
+    const result = page.data.map(v => remember("checkout", v));
+    pages.push({ endpoint: "checkout/sessions", page: checkoutPages, cursor: null, count: result.length, hasMore: page.has_more, projectionDigest: digest(result.map(sanitized)) });
+    sessions.set(payment, result); return result;
   }
   const reader: MarketingStripeReader = {
     payment: async r => await retrieve("payment", r) as Awaited<ReturnType<MarketingStripeReader["payment"]>>,
@@ -210,7 +229,7 @@ export async function auditUpstreamCash(input: AuditInput, send: AuditTransport,
         retain(result.event, candidate.kind === "charge" ? [paymentId, ...cs.map(s => String(s.id))] : [candidate.id], false, owner.orgId);
         if (result.originalPurchase) retain(result.originalPurchase.event, [paymentId, ...cs.map(s => String(s.id))], result.originalPurchase.event.occurredAt < p.from || result.originalPurchase.event.occurredAt >= p.to, owner.orgId);
       } catch (e) {
-        if (e instanceof AuditStop && ["read_limit", "overall_deadline", "clock_regressed", "request_deadline", "provider_read_failed", "rate_limited", "response_binding_mismatch", "conflicting_object", "mode_mismatch", "invalid_page", "identity_mismatch"].includes(e.code)) throw e;
+        if (e instanceof AuditStop && ["page_limit", "read_limit", "overall_deadline", "clock_regressed", "request_deadline", "provider_read_failed", "rate_limited", "response_binding_mismatch", "conflicting_object", "mode_mismatch", "invalid_page", "identity_mismatch"].includes(e.code)) throw e;
         gap(e instanceof MarketingSourceError || e instanceof AuditStop ? e.code : "unsupported_object", candidate.id);
       }
     }
@@ -220,6 +239,7 @@ export async function auditUpstreamCash(input: AuditInput, send: AuditTransport,
   const packet = {
     schemaVersion: 1, contract: "upstream-cash-audit/v1", evidence: "local_retained_not_database_immutable",
     pins: { ...p, accountId: opaque(p.accountId) }, limits: UPSTREAM_LIMITS,
+    retainedObservation,
     observation: { startedAt: new Date(start).toISOString(), completedAt: new Date(clock.now()).toISOString() },
     A: "not_observed", B: retained.B, C: "unknown",
     processorEnumeration: exhausted.charges && exhausted.refunds && !failure ? "enumeration_complete_for_declared_scope" : "partial",

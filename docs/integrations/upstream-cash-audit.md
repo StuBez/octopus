@@ -33,7 +33,7 @@ needed by in-range objects. No authorization headers or network are used. Lists
 are independent of retained ledger membership. Original-payment dependencies may
 precede activation; they retain their actual timestamps and do not trigger capture.
 
-The core enforces 100 objects/page, 10 pages/list endpoint, 500 total reads,
+The core enforces 100 objects/page, 10 pages/list endpoint (including filtered Checkout pages), 500 total reads,
 10 seconds/read and five minutes overall with zero retries. Invalid input or
 authority pins reject before any read. Page, read, deadline, identity or HTTP
 failures during observation produce partial evidence; an oversized final packet
@@ -85,3 +85,10 @@ individual refunds, a pre-interval original dependency, missing ledger, lost ACK
 pending-to-success and unsupported cases. Receiver comparison, if separately
 authorized, must use a new fixture and keep its observation times and A assessment
 separate. This driver needs no backend key and sends no ingestion or comparison.
+
+Input pin, binding, project, transport and ownership projections reject unknown
+fields before any reads. The retained inventory must use the current normalization
+contract and include its sealed `producerObservation` interval, retained separately
+from audit read times. This offline command consumes an already prepared inventory;
+it does not acquire a fresh post-enumeration snapshot or prove cross-system atomicity.
+Any future operational snapshot/scan ordering remains a separate owner-reviewed step.

@@ -122,23 +122,42 @@ describe("upstream cash audit (synthetic only)", () => {
     expect(p.failure).toBe("request_deadline"); expect(calls).toBe(1); expect(aborted).toBe(true);
   }, 15_000);
 
-  it("caps total reads at 500 even across successful dependency lookups", async () => {
+  it("caps total reads at 500 even across exact failed-refund parent reads", async () => {
     const f = await upstreamFixture(); let calls = 0;
-    const charges = Array.from({ length: 250 }, (_, i) => ({ ...f.charge, id: `ch_${i}`, payment_intent: `pi_${i}` }));
+    const refunds = Array.from({ length: 600 }, (_, i) => ({ ...f.refund, id: `re_${i}`, charge: `ch_${i}`, status: "failed" }));
     const p = JSON.parse((await auditUpstreamCash(f.input, async r => {
       calls++; const u = new URL(r.url);
-      if (u.pathname === "/v1/charges") {
+      if (u.pathname === "/v1/refunds") {
         const start = u.searchParams.has("starting_after") ? Number(u.searchParams.get("starting_after")!.slice(3)) + 1 : 0;
-        return Response.json({ object: "list", data: charges.slice(start, start + 100), has_more: start + 100 < charges.length });
+        return Response.json({ object: "list", data: refunds.slice(start, start + 100), has_more: start + 100 < refunds.length });
       }
-      if (u.pathname === "/v1/refunds" || u.pathname === "/v1/checkout/sessions") return Response.json({ object: "list", data: [], has_more: false });
-      if (u.pathname.startsWith("/v1/payment_intents/")) {
-        const id = u.pathname.split("/").at(-1)!;
-        return Response.json({ ...f.payment, id, latest_charge: `ch_${id.slice(3)}` });
-      }
+      if (u.pathname === "/v1/charges") return Response.json({ object: "list", data: [], has_more: false });
+      if (u.pathname.startsWith("/v1/charges/")) return Response.json({ ...f.charge, id: u.pathname.split("/").at(-1)! });
       return f.send(r);
     }, { now: () => f.now })).body);
     expect(calls).toBe(500); expect(p.failure).toBe("read_limit"); expect(p.processorEnumeration).toBe("partial");
+  });
+
+  it("caps filtered Checkout list pages and rejects unexpected pins before reads", async () => {
+    const f = await upstreamFixture(); let checkoutPages = 0;
+    const charges = Array.from({ length: 11 }, (_, i) => ({ ...f.charge, id: `ch_${i}`, payment_intent: `pi_${i}` }));
+    const p = JSON.parse((await auditUpstreamCash(f.input, async r => {
+      const u = new URL(r.url);
+      if (u.pathname === "/v1/charges") return Response.json({ object: "list", data: charges, has_more: false });
+      if (u.pathname === "/v1/refunds") return Response.json({ object: "list", data: [], has_more: false });
+      if (u.pathname === "/v1/checkout/sessions") { checkoutPages++; return Response.json({ object: "list", data: [], has_more: false }); }
+      if (u.pathname.startsWith("/v1/payment_intents/")) { const id = u.pathname.split("/").at(-1)!; return Response.json({ ...f.payment, id, latest_charge: `ch_${id.slice(3)}` }); }
+      return f.send(r);
+    }, { now: () => f.now })).body);
+    expect(checkoutPages).toBe(10); expect(p.failure).toBe("page_limit");
+    for (const target of [f.input.pins, f.input.pins.binding, f.input.pins.binding.project]) {
+      Object.assign(target, { unexpectedField: "synthetic-private-sentinel" });
+      let reads = 0;
+      await expect(auditUpstreamCash(f.input, async r => { reads++; return f.send(r); }, { now: () => f.now })).rejects.toThrow();
+      expect(reads).toBe(0); Reflect.deleteProperty(target, "unexpectedField");
+    }
+    const good = JSON.parse((await auditUpstreamCash(f.input, f.send, { now: () => f.now })).body);
+    expect(good.retainedObservation).toEqual(f.retained.producerObservation);
   });
 
   it("reads only the exact pre-interval original needed by a refund", async () => {
