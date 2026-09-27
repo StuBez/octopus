@@ -76,7 +76,7 @@ Late facts require a new packet with a new knowledge time and the old digest as
 retains its original creation timestamp and may require an explicitly scoped
 overlapping successor interval. No historical sweep runs automatically.
 
-## New receiver fixture needs (not provisioned)
+## Future receiver fixture requirements
 
 Root owns setup and cleanup after reviewing exact source and driver hashes. Supply
 only synthetic retained inventory, independently expected TEST binding, ownership
@@ -85,6 +85,8 @@ individual refunds, a pre-interval original dependency, missing ledger, lost ACK
 pending-to-success and unsupported cases. Receiver comparison, if separately
 authorized, must use a new fixture and keep its observation times and A assessment
 separate. This driver needs no backend key and sends no ingestion or comparison.
+For the refund lifecycle's exact-commit acceptance and rollout boundary, see
+[isolated readiness](refund-completion.md#isolated-readiness-only).
 
 Input pin, binding, project, transport and ownership projections reject unknown
 fields before any reads. The retained inventory must use the current normalization

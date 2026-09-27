@@ -33,6 +33,9 @@ metadata does not identify initial versus renewal charges, so those payments use
 Stripe charge metadata. Manual capture is held because the current normalizer
 uses the automatic charge creation timestamp.
 
+For webhook-to-ledger processing and its activation boundary, see the
+[refund completion lifecycle](integrations/refund-completion.md).
+
 ## Durable delivery
 
 The existing engine schedules `marketing-conversions` every minute when enabled.

@@ -31,15 +31,21 @@ duplicate webhook does not fabricate an outbox row or replay the original paymen
 
 Source tests exercise the actual route and credit transaction code with synthetic
 provider/signature/database boundaries. They are not real financial acceptance.
-Receiver owner must provision a NEW disposable fixture after reviewed pins. Verify
+The release owner reports isolated PostgreSQL/capture/dispatch/receiver acceptance
+for `d2def992fe0a281c764191cad67aa9a6ad5d03e6`; both disposable databases were
+removed. This is exact-commit isolated evidence, not production/provider acceptance.
+Runtime changes require new isolated acceptance coordination before rollout, using
+a new disposable fixture after reviewed pins. Verify
 pending webhook creates no ledger/outbox, successful completion creates exactly one
 ledger and (after normal capture) one canonical refund, and duplicate/out-of-order
 delivery preserves the original purchase and refund receipts. Include an older
 original outside the refund interval, ownership/amount/currency failures and QA
 preservation. Keep A/B/C separate; C remains unknown.
 
-No production deployment, event replay, refund, debit or endpoint configuration
-change is implied. Before any future activation, separately verify that the owned
-Stripe destination actually delivers `refund.updated`; this source change neither
-reads nor alters destination subscriptions. It does not backfill earlier missed
+Only the outer release owner performs the separately guarded application rollout.
+The `refund.updated` destination subscription is absent and separately held under
+the current release authorization; application rollout does not enable it. Any
+future subscription activation requires separate coordination and verification.
+This source change neither reads nor alters destination subscriptions and authorizes
+no event replay or financial action. It does not backfill earlier missed
 events or reverse previously processed refunds that later change state.
