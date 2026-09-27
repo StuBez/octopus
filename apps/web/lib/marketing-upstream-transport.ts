@@ -1,5 +1,6 @@
 import { cashAssert, cashBinding, cashDigest, cashObject, cashTime } from "./marketing-cash-compare";
-import { resolveMarketingConfig } from "./marketing-conversions";
+import { normalizeMarketingCash } from "./marketing-cash-contract";
+import { conversionId, resolveMarketingConfig } from "./marketing-conversions";
 import { auditUpstreamCash, UPSTREAM_LIMITS, validateUpstreamInput, type AuditInput, type AuditPins } from "./marketing-upstream-audit";
 
 export type StripeAuditFetch = (url: string, init: RequestInit) => Promise<Response>;
@@ -15,6 +16,65 @@ export type UpstreamAuthority = {
 export function planUpstreamTransport(input: AuditInput, authority: UpstreamAuthority, evidenceDirectory: string, now = Date.now()) {
   cashObject(authority, ["expectedPins", "issuedAt", "expiresAt"]);
   const retained = validateUpstreamInput(input, now);
+  const { retained: inventory, ledger, stored, outbox, uuid } = retained;
+  const gaps = (inventory.gaps as unknown[]).map(g => cashObject(g, ["code", "origin"]));
+  cashAssert(gaps.every(g => typeof g.origin === "string" && g.origin.length > 0 && typeof g.code === "string" &&
+    ["truncated", "missing_outbox", "unresolved_payload", "unresolved_original", "delivery_incomplete", "unaccounted_retained_origin"].includes(g.code)));
+  cashAssert(inventory.B === (gaps.length ? "incomplete" : "complete_retained_scope"));
+  for (const [rows, field] of [[ledger, "id"], [outbox, "id"], [outbox, "originKey"], [stored, "businessIdentity"]] as const) {
+    cashAssert(rows.every(r => typeof r[field] === "string" && r[field] !== "") && new Set(rows.map(r => r[field])).size === rows.length);
+  }
+  const canonical = new Map<string, ReturnType<typeof normalizeMarketingCash>>();
+  const receipts = new Map<string, string>();
+  const aliases = new Set<string>();
+  for (const row of outbox) {
+    cashAssert(row.environment === undefined || row.environment === input.pins.environment);
+    cashAssert(row.sourceId === undefined || row.sourceId === input.pins.binding.sourceId);
+    const fact = ledger.find(l => row.originKey === `ledger:${l.id}`);
+    if (fact) cashAssert(row.organizationId === fact.organizationId && row.sourceCreatedAt === fact.createdAt && row.reference === (fact.stripeRefundId ?? fact.stripeSessionId));
+    if (String(row.originKey).startsWith("payment:")) cashAssert(row.originKey === `payment:${row.reference}` && /^pi_/.test(String(row.reference)));
+    if (row.payload === null || row.payload === "") {
+      cashAssert(row.status !== "delivered" && gaps.some(g => g.code === "unresolved_payload" && g.origin === row.id));
+      continue;
+    }
+    cashAssert(typeof row.payload === "string");
+    const event = normalizeMarketingCash(row.payload);
+    cashAssert(row.kind === undefined || row.kind === event.eventType);
+    cashAssert(typeof row.organizationId === "string" && event.customerId === conversionId("organization", row.organizationId));
+    cashAssert(typeof row.reference === "string" && (event.eventType === "refund" ? /^(re_|pyr_)/ : /^(pi_|cs_)/).test(row.reference));
+    if (event.eventType === "refund" || row.reference.startsWith("pi_")) cashAssert(event.transactionId === conversionId(event.eventType === "refund" ? "refund" : "payment", row.reference));
+    const previous = canonical.get(event.businessIdentity);
+    cashAssert(!previous || previous.semanticDigest === event.semanticDigest);
+    canonical.set(event.businessIdentity, event);
+    if (row.status === "delivered") {
+      cashAssert(typeof row.receiptId === "string" && uuid.test(row.receiptId) && [200, 201].includes(Number(row.httpStatus)));
+      cashAssert(row.deliveredAt === undefined || (typeof row.deliveredAt === "string" && cashTime(row.deliveredAt)));
+      cashAssert(!receipts.has(event.businessIdentity) || receipts.get(event.businessIdentity) === row.receiptId);
+      cashAssert(![...receipts].some(([identity, receipt]) => identity !== event.businessIdentity && receipt === row.receiptId));
+      receipts.set(event.businessIdentity, row.receiptId);
+    }
+  }
+  for (const member of stored) {
+    cashAssert(member.businessIdentity === JSON.stringify([member.eventType, member.transactionId]));
+    const event = canonical.get(String(member.businessIdentity));
+    cashAssert(event && member.semanticDigest === event.semanticDigest && member.occurredAt === event.occurredAt);
+    cashAssert(member.receiptId === (receipts.get(event.businessIdentity) ?? null));
+    cashAssert(typeof member.dependency === "boolean");
+    if (!member.dependency) cashAssert(event.occurredAt >= input.pins.from && event.occurredAt < input.pins.to);
+    else cashAssert(event.eventType === "purchase" && stored.some(s => s.eventType === "refund" && canonical.get(String(s.businessIdentity))?.originalTransactionId === event.transactionId));
+    if (member.aliases !== undefined) {
+      cashAssert(Array.isArray(member.aliases) && member.aliases.length > 0);
+      for (const alias of member.aliases) {
+        cashAssert(typeof alias === "string" && !aliases.has(alias)); aliases.add(alias);
+        const row = outbox.find(r => r.id === alias);
+        cashAssert(row && typeof row.payload === "string" && normalizeMarketingCash(row.payload).businessIdentity === event.businessIdentity);
+      }
+    }
+    if (event.originalTransactionId) {
+      const original = canonical.get(JSON.stringify(["purchase", event.originalTransactionId]));
+      if (original) cashAssert(original.customerId === event.customerId && original.currency === event.currency && original.occurredAt <= event.occurredAt && BigInt(original.amountMinor) >= BigInt(event.amountMinor));
+    }
+  }
   // Exact JSON contract: field order is deliberately retained, not silently normalized.
   cashAssert(JSON.stringify(authority.expectedPins) === JSON.stringify(input.pins));
   const issued = Date.parse(cashTime(authority.issuedAt)), expires = Date.parse(cashTime(authority.expiresAt));

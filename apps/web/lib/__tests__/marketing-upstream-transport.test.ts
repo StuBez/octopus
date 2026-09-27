@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { executeUpstreamTransport, planUpstreamTransport, stripeAuditTransport, type StripeAuditFetch, type UpstreamAuthority } from "../marketing-upstream-transport";
 import { runOperator } from "../../scripts/marketing-upstream-transport";
+import { cashDigest } from "../marketing-cash-compare";
 import { upstreamFixture } from "./fixtures/marketing-upstream";
 
 async function setup() {
@@ -49,6 +50,77 @@ describe("explicit upstream real-transport candidate (synthetic IO only)", () =>
       await expect(executeUpstreamTransport(f.input, f.authority, "/synthetic/evidence", approved, f.env, (url, init) => f.send(new Request(url, init)), () => tick)).rejects.toThrow();
       expect(f.requests).toHaveLength(0);
     }
+  });
+
+  it("rejects sealed ambiguity and malformed gaps before any synthetic send", async () => {
+    const conflicts = ["alias_content_conflict", "alias_receipt_conflict", "scope_conflict", "ledger_origin_conflict", "payload_scope_conflict", "refund_identity_conflict", "payment_identity_conflict", "dependency_origin_conflict", "invalid_payload", "unsupported_reference"];
+    for (const gap of [...conflicts.map(code => ({ code, origin: "outbox_0" })), null, "missing_outbox", { code: ["missing_outbox"], origin: "snapshot" }, { code: "missing_outbox" }, { code: "missing_outbox", origin: 1 }, { code: "unknown", origin: "outbox_0" }, { code: "missing_outbox", origin: "outbox_0", extra: true }]) {
+      const f = await setup();
+      Object.assign(f.retained, { B: "incomplete", gaps: [gap] }); f.seal();
+      f.authority.expectedPins = structuredClone(f.input.pins);
+      expect(() => f.plan()).toThrow();
+      let sends = 0;
+      await expect(executeUpstreamTransport(f.input, f.authority, "/synthetic/evidence", "0".repeat(64), f.env, async () => { sends++; return Response.json({}); }, () => f.now)).rejects.toThrow();
+      expect(sends).toBe(0);
+    }
+  });
+
+  it("rejects conflicting retained evidence even without reported conflict gaps", async () => {
+    for (const kind of ["member", "ledger", "outbox", "origin", "alias", "receipt", "scope", "payload", "digest", "identity", "aliases", "gap_state"] as const) {
+      const f = await setup();
+      if (kind === "member") f.retained.members.push(structuredClone(f.retained.members[0]!));
+      if (kind === "ledger") f.retained.ledger.push(structuredClone(f.retained.ledger[0]!));
+      if (kind === "outbox") f.retained.outbox.push(structuredClone(f.retained.outbox[0]!));
+      if (kind === "origin") f.retained.outbox[0]!.organizationId = "org_wrong";
+      if (kind === "alias") f.retained.outbox.push({ ...f.retained.outbox[0]!, id: "outbox_alias", originKey: "ledger:alias", payload: JSON.stringify({ ...JSON.parse(f.retained.outbox[0]!.payload), amountMinor: "1" }) });
+      if (kind === "receipt") f.retained.outbox[0]!.receiptId = f.retained.members[1]!.receiptId;
+      if (kind === "scope") Object.assign(f.retained.outbox[0]!, { environment: "live" });
+      if (kind === "payload") f.retained.outbox[0]!.payload = "{}";
+      if (kind === "digest") f.retained.members[0]!.semanticDigest = "a".repeat(64);
+      if (kind === "identity") f.retained.members[0]!.businessIdentity = "wrong";
+      if (kind === "aliases") Object.assign(f.retained.members[0]!, { aliases: ["outbox_0", "outbox_0"] });
+      if (kind === "gap_state") Object.assign(f.retained, { gaps: [{ code: "missing_outbox", origin: "ledger:missing" }] });
+      f.seal(); f.authority.expectedPins = structuredClone(f.input.pins);
+      expect(() => f.plan()).toThrow();
+      let sends = 0;
+      await expect(executeUpstreamTransport(f.input, f.authority, "/synthetic/evidence", "0".repeat(64), f.env, async () => { sends++; return Response.json({}); }, () => f.now)).rejects.toThrow();
+      expect(sends).toBe(0);
+    }
+  });
+
+  it("preserves missing capture, ownership and incomplete delivery as gaps", async () => {
+    for (const kind of ["missing_outbox", "unresolved_payload", "unresolved_original", "delivery_incomplete", "ownership", "truncated", "unaccounted_retained_origin"] as const) {
+      const f = await setup();
+      if (kind === "missing_outbox") { f.retained.outbox.splice(0, 1); f.retained.members.splice(0, 1); }
+      if (kind === "unresolved_payload") { Object.assign(f.retained.outbox[0]!, { payload: null, status: "pending", receiptId: null }); f.retained.members.splice(0, 1); }
+      if (kind === "unresolved_original") { f.retained.outbox.splice(0, 1); f.retained.members.splice(0, 1); }
+      if (kind === "delivery_incomplete") { Object.assign(f.retained.outbox[0]!, { status: "pending", receiptId: null }); Object.assign(f.retained.members[0]!, { receiptId: null }); }
+      if (kind === "ownership") { f.input.ownership = []; f.input.pins.ownershipDigest = cashDigest("[]"); }
+      else Object.assign(f.retained, { B: "incomplete", gaps: [{ code: kind, origin: kind === "unresolved_payload" ? "outbox_0" : "snapshot" }] });
+      f.seal(); f.authority.expectedPins = structuredClone(f.input.pins);
+      const result = JSON.parse((await f.run()).body);
+      expect(f.requests.length).toBeGreaterThan(0);
+      expect(result.captureAgreement).toBe("incomplete"); expect(result.C).toBe("unknown");
+      expect(result.B).toBe(kind === "ownership" ? "complete_retained_scope" : "incomplete");
+      if (kind === "ownership") expect(result.gaps.some((g: { code: string }) => g.code === "ownership_unresolved")).toBe(true);
+    }
+  });
+
+  it("accepts consistent aliases and the exact older refund original", async () => {
+    const f = await setup();
+    const from = new Date(f.refund.created * 1000).toISOString();
+    f.input.pins.from = f.input.pins.activationFrom = from;
+    f.retained.scope.from = f.retained.activationFrom = from;
+    f.env.UNIFIED_ADS_FROM = from;
+    f.responses["/v1/charges"] = { object: "list", data: [], has_more: false };
+    f.retained.ledger.splice(0, 1); f.retained.members[0]!.dependency = true;
+    f.retained.outbox.push({ ...f.retained.outbox[0]!, id: "outbox_alias", originKey: `payment:${f.payment.id}`, reference: f.payment.id });
+    Object.assign(f.retained.members[0]!, { aliases: ["outbox_0", "outbox_alias"] });
+    f.seal(); f.authority.expectedPins = structuredClone(f.input.pins);
+    const result = JSON.parse((await f.run()).body);
+    expect(result.captureAgreement).toBe("matched_for_observed_scope");
+    expect(result.members.find((m: { eventType: string }) => m.eventType === "purchase").dependency).toBe(true);
+    expect(f.requests.filter(r => new URL(r.url).pathname === "/v1/charges/ch_fixture")).toHaveLength(1);
   });
 
   it("denies non-GET, foreign origin, redirects, credentials, headers, query expansion and expired plans", async () => {
