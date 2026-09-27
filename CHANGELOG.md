@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.9] - 2026-09-27
+
+### Added
+- Authorized operators can preview and run a bounded, read-only processor cash audit against retained ledger evidence. Explicit approval, fresh binding checks and durable records keep each run traceable without replaying payments or refunds.
+
+### Upgrade notes
+- No database migration or configuration change is required. Audits do not run automatically after upgrade. Receipt agreement, retained-ledger coverage and upstream completeness remain separate; upstream completeness stays unknown. Real processor observation still requires a separately approved run.
+
 ## [1.2.8] - 2026-09-27
 
 ### Fixed
