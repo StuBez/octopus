@@ -2,7 +2,8 @@
 
 This explicitly invoked audit is separate from capture and dispatch. It has no
 default transport, credentials, database client, receiver client or scheduler.
-The supplied command reads a synthetic transcript only. It cannot contact Stripe.
+The transcript command below reads synthetic input only and cannot contact Stripe.
+For the separately invoked operator, see [real transport](#explicit-real-transport-candidate-execution-and-release-held).
 No production use or upstream completeness acceptance is implied by this candidate.
 
 ```sh
@@ -94,3 +95,96 @@ contract and include its sealed `producerObservation` interval, retained separat
 from audit read times. This offline command consumes an already prepared inventory;
 it does not acquire a fresh post-enumeration snapshot or prove cross-system atomicity.
 Any future operational snapshot/scan ordering remains a separate owner-reviewed step.
+
+## Explicit real-transport candidate (execution and release held)
+
+`apps/web/scripts/marketing-upstream-transport.ts` is a separate, manually invoked
+operator. It does not alter the offline transcript driver or run on import, build,
+startup, cron, capture or dispatch. No migration or dependency is added. Tests
+inject synthetic responses; no Stripe account, production DB or receiver is read.
+
+The candidate is based on 1.2.8 (`d1af546`), which includes the accepted d687 audit
+and d2def refund handler ancestry. The only audit-core change extracts its existing
+pure preflight for reuse; canonical resolution/serialization and A/B/C semantics
+are unchanged. The transport uses the same server `STRIPE_SECRET_KEY` as billing,
+read only at explicit execution, rather than the retrying SDK or a second key.
+It never prints it or sends the Unified Ads key anywhere. Existing
+`UNIFIED_ADS_*` settings, including `UNIFIED_ADS_CASH_EXPECTED_BINDING`, must agree
+with the retained input and independently approved authority. No settings change
+is performed by the operator.
+
+Prepare two protected local artifacts through the existing owner workflow:
+
+1. `input.json`: the existing `AuditInput`, including exact retained inventory
+   bytes, ownership projection and digests. No newly acquired inventory is implied.
+2. `authority.json`: `{ expectedPins: AuditPins, issuedAt, expiresAt }`, retained
+   independently by the owner. Pins must match exactly, including account, mode,
+   API, source/key-ID/project/version/capabilities, activation, interval and digests.
+   Field order is part of this exact JSON contract. This is operator trust, not a
+   provider attestation or automatic proof of ownership completeness.
+
+The authority window and inventory age are each capped at 15 minutes. Expiry is
+checked before execution and every GET. Outdated evidence requires new separately
+scoped preparation, never automatic refresh. The fixed `[from,to)` and activation
+must validate before any network access. Missing or ambiguous ownership remains
+a gap even when both lists exhaust. Unsupported delayed capture, late transitions
+and broader processor/settlement completeness remain unknown.
+
+Planning and execution reject ambiguous retained inventory before provider IO:
+duplicate canonical members, ledger/outbox identities or aliases, conflicting
+payloads, receipts, origins or scope, and malformed or unrecognized gaps. Consistent
+aliases and exact older refund-original dependencies remain valid. An incomplete
+B alone does not reject the inventory: missing capture, unresolved payload or
+original, incomplete delivery, truncation and unaccounted retained origins remain
+gaps. The regression cases live in
+`apps/web/lib/__tests__/marketing-upstream-transport.test.ts`.
+
+Offline planning requires no credentials and makes no requests:
+
+```sh
+bun apps/web/scripts/marketing-upstream-transport.ts plan input.json authority.json /new/protected/evidence
+```
+
+The emitted plan declares exact initial endpoints/bounds, dependent lookup
+families, limits, evidence destination, input/authority digests and no-retry rule.
+Retain the SHA-256 of its exact JSON body (without the printed trailing newline)
+for separate owner approval. The approved plan must be identical at execution.
+The following is documentation only, **not authorization to run**:
+
+```sh
+bun apps/web/scripts/marketing-upstream-transport.ts execute input.json authority.json /new/protected/evidence APPROVED_PLAN_SHA256
+```
+
+Execution reserves a new 0700 directory and exclusively writes/fsyncs a 0600
+`intent.json` before its first GET. An existing directory rejects before any provider read;
+do not delete/reuse it after an ambiguous interruption. `result.json` contains
+only the audit's sanitized projections, canonical identities, gaps and separate
+observations. `receipt.json` pins its digest. Incomplete intent/result/receipt
+sets require read-only reconciliation; there is no recovery replay or automatic
+retry. Successful command completion can contain a **partial** audit: inspect
+`failure`, `gaps` and `processorEnumeration`, not merely the process exit code.
+
+Only `https://api.stripe.com` GETs are allowed. The credential-bearing boundary
+rechecks endpoint/query/header allowlists, exact created bounds, page size,
+API version and remaining budget, and explicitly supplies redirect:error,
+credentials:omit and cache:no-store to fetch. It forwards no incoming cookies,
+Origin, Stripe-Account, arbitrary headers or error bodies. It catches/sanitizes
+network exceptions. HTTP 429, non-200, redirect and deadline failures do not retry.
+The existing audit supplies per-read aborts, body limits and pagination caps.
+Bun's Request.credentials getter may report include even when omit was supplied;
+therefore the fetch call receives explicit options and a fresh header allowlist.
+
+The existing owner must separately approve any future real run and its fresh
+runtime/account/inventory baseline. No new receiver fixture is required for this
+transport candidate; no accepted/destroyed fixture is reused. Late facts or refund
+status transitions require a separately approved successor with predecessorDigest,
+possibly an overlapping interval; old files remain untouched. The output's existing
+"synthetic transport requires separately authorized real acceptance" limitation
+remains a reminder that code/local tests alone do not establish real acceptance.
+
+Official endpoint checks (2026-09-27): [charges list](https://docs.stripe.com/api/charges/list)
+and [refunds list](https://docs.stripe.com/api/refunds/list) support created bounds,
+100-item pages and starting_after; [Checkout list](https://docs.stripe.com/api/checkout/sessions/list)
+supports payment_intent filtering. These are created-time enumerations, not atomic
+cash snapshots. [Authentication](https://docs.stripe.com/api/authentication) uses
+server secrets; no key creation or credential export is needed.

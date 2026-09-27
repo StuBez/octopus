@@ -60,15 +60,14 @@ function sanitized(v: Json): Json {
       : k === "metadata" ? { owner: obj(x).orgId ? opaque(String(obj(x).orgId)) : null, type: ["credit_purchase", "auto_reload", "subscription_start", "subscription"].includes(String(obj(x).type)) ? obj(x).type : null } : x]));
 }
 
-/** Explicit, injected GET-only audit. No ambient fetch, credentials, DB, capture or receiver client. */
-export async function auditUpstreamCash(input: AuditInput, send: AuditTransport, clock = { now: () => Date.now() }) {
+/** Pure preflight shared by the offline planner and injected audit. */
+export function validateUpstreamInput(input: AuditInput, start: number) {
   cashObject(input, ["pins", "transportBinding", "ownership", "retainedBody"]);
   const { pins: p } = input;
   cashObject(p, ["accountId", "environment", "apiVersion", "activationFrom", "from", "to", "binding", "ownershipDigest", "retainedDigest", "predecessorDigest"]);
   cashObject(p.binding, ["sourceId", "environment", "keyId", "capabilities", "project"]);
   cashObject(p.binding.project, ["projectId", "version"]);
   cashObject(input.transportBinding, ["accountId", "environment", "apiVersion"]);
-  const start = clock.now();
   check(p.apiVersion === UPSTREAM_API_VERSION && /^acct_[A-Za-z0-9]+$/.test(p.accountId));
   check(["test", "live"].includes(p.environment) && p.binding.environment === p.environment);
   check(cashTime(p.activationFrom) <= cashTime(p.from) && p.from < cashTime(p.to) && Date.parse(p.to) <= start);
@@ -88,6 +87,14 @@ export async function auditUpstreamCash(input: AuditInput, send: AuditTransport,
   check(["complete_retained_scope", "incomplete"].includes(String(retained.B)) && Array.isArray(retained.gaps) && Array.isArray(retained.ledger) && Array.isArray(retained.members) && Array.isArray(retained.outbox));
   const ledger = retained.ledger.map(obj), stored = retained.members.map(obj), outbox = retained.outbox.map(obj);
   check(ledger.length <= 1000 && stored.length <= 2000 && outbox.length <= 2000);
+  return { retained, retainedObservation, ledger, stored, outbox, uuid };
+}
+
+/** Explicit, injected GET-only audit. No ambient fetch, credentials, DB, capture or receiver client. */
+export async function auditUpstreamCash(input: AuditInput, send: AuditTransport, clock = { now: () => Date.now() }) {
+  const start = clock.now();
+  const { retained, retainedObservation, ledger, stored, outbox, uuid } = validateUpstreamInput(input, start);
+  const p = input.pins;
   const gaps: { code: string; subject: string }[] = [];
   const gap = (code: string, subject: string) => gaps.push({ code, subject: opaque(subject) });
   const reads: { requestDigest: string; startedAt: string; completedAt: string; status: number | null; requestId: string | null }[] = [];
