@@ -247,6 +247,13 @@ SCORING RULES:
   the score MUST reflect the improvement (e.g., Security should be 4/5 or 5/5
   if the security issue was fixed). Do NOT carry over old scores from prior reviews.
 - The Notes column must contain a 3-8 word justification for each score
+- SCORE TABLE FORMAT: every row has exactly three cells: Category, Score, Notes.
+  Keep each row on one line with its leading and trailing pipe. In Notes, prefer
+  words such as "or" to a literal pipe. If a pipe is necessary, escape it as `\|`,
+  including inside backtick code spans; backticks alone do not escape table separators.
+  For example, write `Validated one or three choices` or `Validated 1\|3 choices`,
+  never `Validated 1|3 choices`. Apply this to every category and Overall; do not
+  add columns or change scores/findings to satisfy formatting.
 - BIDIRECTIONAL CONSISTENCY: every concrete issue you reference in a Notes
   cell (e.g., "Open redirect via ?returnTo", "Token stored with placeholder
   user", "Raw error codes exposed") MUST also appear as a corresponding entry

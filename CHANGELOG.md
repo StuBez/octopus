@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Review instructions require three-column score tables and escaped literal pipes in notes, including code spans. Strict validation still rejects malformed output; existing unassessed attempts remain unchanged.
+
 ## [1.2.10] - 2026-09-28
 
 ### Fixed
