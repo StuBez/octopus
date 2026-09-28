@@ -31,7 +31,7 @@ mock.module("@octopus/db", () => ({ prisma: { ...db, $transaction: (run: (tx: ty
 const { openaiProvider } = await import("../../providers/openai");
 const { callOpenAiGateway } = await import("../../providers/openai-gateway");
 const { observeAiRequest, completionEvidence } = await import("../../providers/request-evidence");
-const { executeCoveredReview, executeFindingsRecovery, recordNoModelAssessment, validReviewResponse, reviewResponseValidationError } = await import("../../review-assessment");
+const { executeCoveredReview, executeFindingsRecovery, recordNoModelAssessment, normalizeReviewResponse, validReviewResponse, reviewResponseValidationError } = await import("../../review-assessment");
 const { prepareReviewInput, applyReviewCoverage, renderReviewCoverage, reviewCheckResult, reviewAssessmentComplete, sha256 } = await import("../../review-coverage");
 const { createCoveredReviewRequest } = await import("../../review-request");
 const { saveReviewAttempt } = await import("../../review-attempt");
@@ -73,6 +73,24 @@ ${zeroSummary}
 
 Last reviewed commit: ${"a".repeat(40)}
 `;
+// Typography must not change assessment semantics or weaken malformed-score guards.
+for (const note of [String.raw`literal a\|b`, String.raw`literal a\\\|b`]) {
+  const text = valid.replace("No security finding", note).replace("Lowest category", note).replaceAll("5/5", "5 / 5").replaceAll("4/5", "4 / 5");
+  assert.equal(reviewResponseValidationError(text), null);
+  assert.ok(normalizeReviewResponse(text).includes(note));
+  assert.ok(normalizeReviewResponse(text).includes("**4/5**"));
+}
+for (const text of [
+  valid.replace("No security finding", String.raw`literal a\\|b`),
+  valid.replace("No security finding", "unescaped | separator"),
+  valid.replace("| Security | 5/5 | No security finding |\n", ""),
+  valid.replace("| Security |", "| Security | 5/5 | duplicate |\n| Security |"),
+  ...["0 / 5", "6 / 5", "4.5 / 5", "5 / 10", "5 / 5 injected"].map(score => valid.replace("| Security | 5/5 |", `| Security | ${score} |`)),
+  valid.replace("**4/5**", "**6 / 5**"),
+  valid.replace("**Overall**", "Overall | Extra"),
+  valid.replace("[]", "[null]"),
+]) assert.notEqual(reviewResponseValidationError(text), null);
+
 // Exact adjacent advisory from the sanitized a941 reproduction; no customer code.
 const conflictRisk = "> ⚠️ **Conflict Risk**: This PR modifies high-traffic shared files (`app/db.py`, `app/worker.py`, `app/bot.py`, `app/media_requests.py`). Rebase frequently against `main` and coordinate with authors of related open PRs.";
 const withAdvisory = (body: string, advisory = conflictRisk) => body.replace("### Findings\n", `${advisory}\n\n### Findings\n`);
@@ -147,7 +165,8 @@ for (const [name, text, validationReason] of [
     assert.equal(p.coverage.complete, false);
     output = { choices: [{ message: { content: text }, finish_reason: finish }] };
     await executeCoveredReview(requestFor(p), p.coverage, "template-unassessed-v2", request => openaiProvider.create(request, "fake"));
-    assert.deepEqual(p.coverage.assessment?.responseValidation, { state: validationReason === null ? "valid" : "invalid", reason: validationReason });
+    assert.equal(p.coverage.assessment?.responseValidation?.state, validationReason === null ? "valid" : "invalid");
+    assert.equal(p.coverage.assessment?.responseValidation?.reason, validationReason);
     assert.equal(p.coverage.assessment?.state, validationReason === null && finish === "stop" ? "completed" : "incomplete");
     assert.equal(p.coverage.assessment?.responseSha256, sha256(text));
     if (validationReason) assert.ok(p.coverage.assessment!.reason.includes(validationReason));
@@ -597,3 +616,13 @@ assert.equal(reviewResponseValidationError(valid.replace("### Summary", "## 🐙
   }
 }
 console.log("PASS adapter completion, publication and immutable request identity");
+
+const structural = plan();
+const privateToken = "secret-marker-must-not-be-retained";
+output = { choices: [{ message: { content: valid.replace("| Security | 5/5 |", `| Security | ${privateToken} |`) }, finish_reason: "stop" }], usage: {} };
+await executeCoveredReview(requestFor(structural), structural.coverage, "v1", request => openaiProvider.create(request, "fake"));
+const diagnostic = structural.coverage.assessment?.responseValidation?.scoreStructure;
+assert.equal(diagnostic?.length, 6);
+assert.deepEqual(diagnostic?.[0], { category: "Security", rows: 1, cells: 5, token: "invalid" });
+assert.ok(!JSON.stringify(diagnostic).includes(privateToken));
+assert.equal(structural.coverage.assessment?.state, "incomplete");
