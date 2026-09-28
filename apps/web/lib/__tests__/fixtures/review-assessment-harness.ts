@@ -1,5 +1,7 @@
 import { mock } from "bun:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { substitutePromptVars } from "../../prompt-substitute";
 import { createHash } from "node:crypto";
 import type { AiCreateParams } from "../../providers";
 
@@ -106,6 +108,19 @@ function plan(oversized = false, maxChars = 300000) {
   return result;
 }
 const requestFor = (p: ReturnType<typeof plan>, model = "gpt-test"): AiCreateParams => createCoveredReviewRequest({ model, system: "Trusted review template", number: 1, title: "Validators", author: "fixture", diff: p.diff, coverage: p.coverage, comment: "@octopus context", repoConfig: "" });
+// The final emitted provider system prompt is the contract under test, not proof
+// that a live model follows it. No provider call or old-attempt reconstruction.
+const scoreTemplate = readFileSync(new URL("../../../prompts/SYSTEM_PROMPT.md", import.meta.url), "utf8");
+const contractPlan = plan();
+const contractRequest = createCoveredReviewRequest({
+  model: "gpt-test", system: substitutePromptVars(scoreTemplate, { PR_NUMBER: "312", DIAGRAM_RULES: "" }),
+  number: 312, title: "Separator fixture", author: "fixture", diff: contractPlan.diff,
+  coverage: contractPlan.coverage, comment: "", repoConfig: "",
+});
+assert.ok(contractRequest.system.includes("SCORE TABLE FORMAT: every row has exactly three cells: Category, Score, Notes."));
+assert.ok(contractRequest.system.includes("Validated 1\\|3 choices"));
+assert.ok(contractRequest.system.includes("backticks alone do not escape table separators."));
+
 // Exercise every v2 asset kind through assessment, persistence and publication.
 const { fetchGitHubReviewInput } = await import("../../github-review-input");
 const assetPaths = ["png", "jpg", "jpeg", "ttf", "woff2", "zip"].map(ext => `assets/example.${ext}`);
@@ -230,6 +245,9 @@ for (const [name, text, finish, complete] of [
   ["rereview-headed-interrupted", withAdvisory(valid, `### Positive Highlights\n${rereviewNotes}`), "length", false],
   ["advisory-missing-json", withAdvisory(valid.replace(/<!-- OCTOPUS_FINDINGS_START -->[\s\S]*?<!-- OCTOPUS_FINDINGS_END -->/, "")), "stop", false],
   ["advisory-incomplete-provider", withAdvisory(valid), "length", false],
+  ["score-note-words", valid.replace("No security finding", "Validated one or three choices"), "stop", true],
+  ["score-note-escaped-code", valid.replace("No security finding", "Validated `1\\|3` choices").replace("Lowest category", "Validated `1\\|3` choices"), "stop", true],
+  ["score-note-unescaped-code", valid.replace("No security finding", "Validated `1|3` choices"), "stop", false],
   ["valid", valid, "stop", true],
   ["unassessed-complete-input", unassessed, "stop", false],
   ["rereview-valid", valid, "stop", true],
