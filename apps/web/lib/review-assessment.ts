@@ -257,7 +257,7 @@ export function recordNoModelAssessment(coverage: ReviewCoverage): void {
   };
 }
 
-/** The caller persists this digest-only record together with the final outcome. */
+/** The caller persists assessment evidence without response text alongside the final outcome. */
 export async function executeCoveredReview(
   request: AiCreateParams, coverage: ReviewCoverage, template: string,
   call: (request: AiCreateParams) => Promise<AiResponse>,
