@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.10] - 2026-09-28
+
 ### Fixed
 - Review score tables accept escaped Markdown pipes and unambiguous spacing around score slashes while preserving validation guards. Rejected responses retain bounded structural diagnostics without raw output; earlier unassessed attempts remain unchanged.
 
